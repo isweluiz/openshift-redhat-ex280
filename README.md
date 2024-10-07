@@ -161,13 +161,18 @@ oc delete secret kubeadmin -n kube-system
 
 Working with htpasswd
 
-- Create: `htpasswd -c -B -b /tmp/htpasswd student redhat123`
-- Update: `htpasswd -b /tmp/htpasswd student redhat1234`
+- Create: `htpasswd -c -B -b /tmp/htpasswd luiz redhat123`
+- Update: `htpasswd -b /tmp/htpasswd luiz redhat1234`
+- Delete: `htpasswd -D /tmp/htpasswd luiz`
 
 Create a secret:
 ```
 oc create secret generic htpasswd-secret \
 > --from-file htpasswd=/tmp/htpasswd -n openshift-config
+```
+Extract the secret content: 
+```
+oc extract secrets/htpasswd-secret --to=-
 ```
 
 Adding to OAuth:
@@ -184,6 +189,29 @@ spec:
     htpasswd:
       fileData:
         name: htpasswd-secret
+```
+or 
+
+```yaml
+apiVersion: config.openshift.io/v1
+kind: OAuth
+...output omitted...
+spec:
+  identityProviders:
+  - ldap:
+...output omitted...
+    type: LDAP
+  - htpasswd:
+      fileData:
+        name: localusers
+    mappingMethod: claim
+    name: myusers
+    type: HTPasswd
+```
+
+the authentication pods should be restarted 
+```
+oc get pods -n openshift-authentication
 ```
 
 ### Getting users and identities
@@ -207,7 +235,6 @@ Default roles
 -	**cluster-admin** Users with this role have superuser access to the cluster resources. These users can perform any action on the cluster, and have full control of all projects.
 -	**cluster-status** Users with this role can get cluster status information.
 -	**self-provisioner** Users with this role can create new projects.
-
 Default roles that can be added or removed from a project level:
 -	**admin** Users with this role can manage all project resources, including granting access to other users to the project.
 -	**edit** Users with this role can create, change, and delete common application resources from the project, such as services and deployment configurations. These users cannot act on management resources such as limit ranges and quotas, and cannot manage access permissions to the project.
@@ -229,6 +256,32 @@ oc set volume dc/demo \
 > --secret-name=demo-secret \
 > --mount-path=/app-secrets
 ```
+### Difference between add-cluster-role-to-user and add-role-to-user
+
+1. oc adm policy add-cluster-role-to-user
+Cluster-wide scope: This command is used to assign cluster roles, which apply across the entire OpenShift cluster.
+
+- **Cluster role:** A cluster role is a role that is defined at the cluster level and can provide permissions that apply to all projects (namespaces) in the cluster.
+
+- **Use case:** You would use this command to assign roles like cluster-admin or other roles that grant access across all namespaces, nodes, or the cluster as a whole.
+
+```shell
+oc adm policy add-cluster-role-to-user cluster-admin user1
+```
+
+2. oc adm policy add-role-to-user
+Namespace scope: This command is used to assign a role that is scoped to a specific namespace (project).
+
+- **Role:** A role is limited to a particular namespace, providing permissions only within that namespace.
+
+- **Use case:** You would use this command when you want to assign roles like admin, edit, or view to users for specific projects.
+
+**Example:**
+```
+oc adm policy add-role-to-user admin user1 -n myproject
+```
+This command gives user1 the admin role in the myproject namespace.
+
 
 Controlling Application Permissions with Security Context Constraints (SCCs) (anyuid, privileged etc)  
 ```
@@ -354,6 +407,7 @@ $ oc get limits
 ### Create Quota
 ```
 $ oc create quota project1-quota --hard=memory=2Gi,cpu=200m,pods=10 -n project1
+$ oc create quota my-quota --hard=cpu=2,memory=1G,pods=3,services=6,secrets=6,replicationcontrollers=6 
 ```
 ```
 $ oc describe quota -n project1
@@ -365,6 +419,13 @@ cpu         0     200m
 memory      0     2Gi
 pods        0     10
 ```
+
+```
+$ oc get quota
+NAME       AGE   REQUEST                                                                                       LIMIT
+my-quota   4s    cpu: 0/2, memory: 0/1G, pods: 0/3, replicationcontrollers: 0/6, secrets: 6/6, services: 0/6 
+```
+
 ### Delete All Quota
 ```
 $ oc delete quota --all -n project1
@@ -782,7 +843,7 @@ name: examplechart
 version: 0.1.0
 maintainers:
 - email: dev@example.com
-  name: Developer
+  name: Developerie
 sources:
 - https://git.example.com/examplechart
 ```
@@ -884,6 +945,90 @@ helm search repo
 **Helm References:**
 - [Using Helm](https://helm.sh/docs/intro/using_helm/)
 - [Charts](https://helm.sh/docs/topics/charts/)
+
+
+## Authenticating with the X.509 Certificate
+The installation logs provide the location of the kubeconfig file:
+
+```
+INFO Run 'export KUBECONFIG=/root/auth/kubeconfig' to manage the cluster with 'oc'.
+```
+
+```shell
+export KUBECONFIG=/home/user/auth/kubeconfig
+oc whoami
+oc get nodes
+```
+
+As an alternative, we can use the --kubeconfig option of the oc command.
+```shell
+oc --kubeconfig /home/user/auth/kubeconfig get nodes
+```
+
+#### Deleting the Virtual User
+
+```
+oc delete secret kubeadmin -n kube-system
+```
+
+### Network Security 
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: network-svc
+  namespace: network-review
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: service-cert
+spec:
+  selector:
+    app: network-svc
+  ports:
+    - port: 80
+      targetPort: 8085
+      name: http
+```
+
+
+## OpenShift SDN 
+The DNS operator implements the CoreDNS DNS server
+* The internal CoreDNS server is used by Pods for DNS resolution
+* Use oc describe dns.operator/default to see its config
+* The DNS Operator has different roles:
+  * Create a default cluster DNS name cluster.local
+  * Assign DNS names to namespaces
+  * Assign DNS names to services
+
+```
+oc describe dns.operator/default
+```
+
+* DNS names are composed as servicename.projectname.cluster-dns-name
+  * Example: db.myproject.cluster.local
+* Apart from the A resource records, CoreDNS also implements an SRV record, in which port name and protocol are prepended to the service A record name
+  * Example: _443._tcp.webserver.myproject.cluster.local
+* If a service has no IP address, DNS records are created for the IP addresses of the Pods, and round-robin is applied
+
+```
+oc get network/cluster -o yaml
+```
+
+* Network policy allows defining Ingress and Egress filtering
+* If no network policy exists, all traffic is allowed
+* If a network policy exists, it will block all traffic with the exception of allowed Ingress and Egress traffic
+
+
+
+
+
+
+
+
+
+
+
+
 
 ### Various OpenShift Samples
 - https://github.com/OpenShiftDemos
