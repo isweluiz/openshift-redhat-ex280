@@ -521,9 +521,111 @@ $ openssl x509 -req -days 366 -in file.req  \
       -signkey file.key -out file.crt
 ```
 
+Creating a tls OpenShift secret
+```shell
+$ oc create secret tls secret-certs \
+    --cert certs/file.crt --key certs/file.key 
+```
+
+Mount the secret inside our Deployment file and update our service to be using 8443 port
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+...output omitted...
+        volumeMounts:
+        - name: tls-certs
+          readOnly: true
+          mountPath: /usr/local/etc/ssl/certs
+...output omitted...
+      volumes:
+      - name: tls-certs
+        secret:
+          secretName: secret-certs
+---
+apiVersion: v1
+kind: Service
+...output omitted...
+  ports:
+  - name: https
+    port: 8443
+    protocol: TCP
+    targetPort: 8443
+
+```
+
+After deploy, wait a couple of minutes to ensure that the application pod is running. Use the oc set volumes command to review the volumes that are mounted inside the pod
+```shell
+$ oc set volumes deployment/todo-https
+ todo-https
+  secret/todo-certs as tls-certs
+    mounted at /usr/local/etc/ssl/certs
+```
+
+**Create the encrypted route**
+```shell
+$ oc create route passthrough todo-https \
+    --service todo-https --port 8443 \
+    --hostname todo-https.apps.ocp4.example.com
+route.route.openshift.io/todo-https created
+```
+
+Using the curl command in verbose mode to test the route and to read the certificate
+```shell
+$ curl -vv -I \
+    --cacert certs/training-CA.pem \
+    https://todo-https.apps.ocp4.example.com
+...output omitted...
+* Server certificate:
+*  subject: C=US; ST=North Carolina; L=Raleigh; O=Red Hat; CN=todo-https.apps.ocp4.example.com
+*  start date: Jun 15 01:53:30 2021 GMT
+*  expire date: Jun 14 01:53:30 2026 GMT
+*  subjectAltName: host "todo-https.apps.ocp4.example.com" matched cert's "*.apps.ocp4.example.com"
+*  issuer: C=US; ST=North Carolina; L=Raleigh; O=Red Hat; CN=ocp4.example.com
+*  SSL certificate verify ok.
+...output omitted...
+```
+
+Retrieve the IP address of the todo-https service
+```shell
+$ oc get svc todo-https \
+    -o jsonpath="{.spec.clusterIP}{'\n'}"
+172.30.121.154
+```
+
+Create a debug pod in the todo-https deployment with the Red Hat UBI container image.
+```shell
+oc debug -t deployment/todo-https \
+    --image registry.ocp4.example.com:8443/ubi8/ubi:8.4
+Starting pod/todo-https-debug ...
+Pod IP: 10.128.2.129
+If you don't see a command prompt, try pressing enter.
+sh-4.4$
+```
+
+```shell
+sh-4.4$ curl -I http://172.30.121.154
+HTTP/1.1 301 Moved Permanently
+Server: nginx/1.14.1
+Date: Tue, 15 Jun 2021 02:01:19 GMT
+Content-Type: text/html
+Connection: keep-alive
+Location: https://172.30.121.154:8443/
+```
 
 
-Secure route (edge/passthru):
+```shell
+sh-4.4$ curl -s -k https://172.30.121.154:8443 | head -n5
+<!DOCTYPE html>
+<html lang="en" ng-app="todoItemsApp" ng-controller="appCtl">
+<head>
+    <meta charset="utf-8">
+    <title>ToDo app</title>
+```
+
+### Edge
+With edge termination, TLS termination occurs at the router, before the traffic is routed to the pods. The router serves the TLS certificates, so you must configure them into the route; otherwise, OpenShift assigns its own certificate to the router for TLS termination. Because TLS is terminated at the router, connections from the router to the endpoints over the internal network are not encrypted.
+
+Secure route (edge):
 ```
 $ oc get svc
 $ oc create route edge --service=my-php-service \
@@ -531,6 +633,34 @@ $ oc create route edge --service=my-php-service \
     --key=file.key --cert=file.crt \
     --insecure-policy=Redirect
 ```
+
+```shell
+$ oc create route edge route-https \
+    --service svc-http \
+    --hostname <host>.apps.acme.com
+route.route.openshift.io/route-https created
+```
+
+![Alt text](image-1.png)
+
+### Passthrough
+With passthrough termination, encrypted traffic is sent straight to the destination pod without TLS termination from the router. In this mode, the application is responsible for serving certificates for the traffic. Passthrough is a common method for supporting mutual authentication between the application and a client that accesses it.
+
+![Alt text](image-2.png)
+
+### Re-encryption
+Re-encryption is a variation on edge termination, whereby the router terminates TLS with a certificate, and then re-encrypts its connection to the endpoint, which might have a different certificate. Therefore, the full path of the connection is encrypted, even over the internal network. The router uses health checks to determine the authenticity of the host.
+
+Exposing a service with insecure mode 
+```shell
+$ oc expose svc todo-http \
+    --hostname todo-http.apps.ocp4.example.com
+
+$ oc get routes
+NAME        HOST/PORT                         PATH   SERVICES    PORT   ...
+todo-http   todo-http.apps.ocp4.example.com          todo-http   8080   ...    
+```
+
 
 ### Create a Secret
 ```
@@ -971,7 +1101,13 @@ oc --kubeconfig /home/user/auth/kubeconfig get nodes
 oc delete secret kubeadmin -n kube-system
 ```
 
-### Network Security 
+### Configure Network Policies 
+With network policies, you can configure isolation policies for individual pods. Network policies do not require administrative privileges, and give developers more control over the applications in their projects.  The benefit of this approach is that the location of running pods becomes irrelevant, because with network policies, you can separate traffic regardless of where it originates.
+
+![Alt text](image.png)
+
+
+
 
 ```yaml
 apiVersion: v1
@@ -988,6 +1124,7 @@ spec:
     - port: 80
       targetPort: 8085
       name: http
+
 ```
 
 
