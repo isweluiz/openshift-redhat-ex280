@@ -24,6 +24,12 @@ spec:
   containers:
   - name: nwp-nginx
     image: nginx:1.17
+      #  serviceAccountName: spower
+      #  securityContext:
+      #    runAsNonRoot: true
+      #    allowPrivilegeEscalation: false
+      #    capabilities:
+      #      drop: ["ALL"]
 ...
 
 ---

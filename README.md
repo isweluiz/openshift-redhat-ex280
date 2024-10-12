@@ -214,14 +214,103 @@ the authentication pods should be restarted
 oc get pods -n openshift-authentication
 ```
 
+## Managing secrets 
+
+**In openshift secrets are mainly used for two reasons:**
+- To store credentials which is used by pods in a microservice architecture
+- To store TLS certificates and Keys
+- A TLS secret stores the certificate as tls.crt and the certificate key as tls.key
+- Developer can mount and secret and create a passthrough route 
+- 
+**Different types of secrets:**
+- docker-registry 
+- generic
+- tls
+when information is stored in a secret, Openshift validates that the data conforms to the type of secret. 
+
+```bash
+luiz---------------->>>$oc create secret generic mysql --from-literal user=sqluser --from-literal password=password1 --from-literal database=secretdb --from-literal hostname=mysql --from-literal root_password=password
+secret/mysql created
+luiz---------------->>>$oc get secrets | grep mysql
+mysql                      Opaque                                5      37s
+
+luiz---------------->>>$oc new-app --name mysql --image bitnami/mysql 
+--> Found container image 556d0e7 (4 weeks old) from Docker Hub for "bitnami/mysql"
+
+    * An image stream tag will be created as "mysql:latest" that will track this image
+
+--> Creating resources ...
+    imagestream.image.openshift.io "mysql" created
+    deployment.apps "mysql" created
+    service "mysql" created
+--> Success
+    Application is not exposed. You can expose services to the outside world by executing one or more of the commands below:
+     'oc expose service/mysql' 
+    Run 'oc status' to view your app.
+
+luiz---------------->>>$oc get pods
+NAME                     READY   STATUS             RESTARTS      AGE
+mysql-548f9f9664-drg2b   0/1     CrashLoopBackOff   2 (24s ago)   65s
+postgresql-1-nkm8v       0/1     Running            0             5s
+luiz---------------->>>$oc logs mysql-548f9f9664-drg2b
+mysql 14:05:23.35 INFO  ==> 
+mysql 14:05:23.35 INFO  ==> Welcome to the Bitnami mysql container
+mysql 14:05:23.35 INFO  ==> Subscribe to project updates by watching https://github.com/bitnami/containers
+mysql 14:05:23.36 INFO  ==> Submit issues and feature requests at https://github.com/bitnami/containers/issues
+mysql 14:05:23.36 INFO  ==> Upgrade to Tanzu Application Catalog for production environments to access custom-configured and pre-packaged software components. Gain enhanced features, including Software Bill of Materials (SBOM), CVE scan result reports, and VEX documents. To learn more, visit https://bitnami.com/enterprise
+mysql 14:05:23.36 INFO  ==> 
+mysql 14:05:23.36 INFO  ==> ** Starting MySQL setup **
+mysql 14:05:23.38 INFO  ==> Validating settings in MYSQL_*/MARIADB_* env vars
+mysql 14:05:23.38 ERROR ==> The MYSQL_ROOT_PASSWORD environment variable is empty or not set. Set the environment variable ALLOW_EMPTY_PASSWORD=yes to allow the container to be started with blank passwords. This is recommended only for development.
+
+luiz---------------->>>$oc set env deployment/mysql --from secret/mysql --prefix MYSQL_
+deployment.apps/mysql updated
+luiz---------------->>>$oc get pods
+NAME                     READY   STATUS        RESTARTS      AGE
+mysql-548f9f9664-drg2b   0/1     Terminating   5 (23s ago)   3m58s
+mysql-59db5b8bf6-dxd79   1/1     Running       0             3s
+luiz---------------->>>$
+
+luiz---------------->>>$oc describe secret mysql
+Name:         mysql
+Namespace:    ex280-users-authentication
+Labels:       <none>
+Annotations:  <none>
+
+Type:  Opaque
+
+Data
+====
+user:           7 bytes
+database:       8 bytes
+hostname:       5 bytes
+password:       9 bytes
+root_password:  8 bytes
+
+luiz---------------->>>$oc exec -it mysql-59db5b8bf6-dxd79 -- env | grep -iE mysql
+HOSTNAME=mysql-59db5b8bf6-dxd79
+MYSQL_HOSTNAME=mysql
+MYSQL_PASSWORD=password1
+MYSQL_ROOT_PASSWORD=password
+MYSQL_USER=sqluser
+MYSQL_DATABASE=secretdb
+MYSQL_PORT_3306_TCP_PORT=3306
+MYSQL_SERVICE_PORT=3306
+MYSQL_PORT=tcp://10.217.4.221:3306
+MYSQL_PORT_3306_TCP=tcp://10.217.4.221:3306
+MYSQL_PORT_3306_TCP_PROTO=tcp
+MYSQL_SERVICE_HOST=10.217.4.221
+MYSQL_SERVICE_PORT_3306_TCP=3306
+MYSQL_PORT_3306_TCP_ADDR=10.217.4.221
+BITNAMI_APP_NAME=mysql
+```
+
 ### Getting users and identities
 ```
 oc get users
 oc get identity
 ```
-
 ## Manage Resource Access
-
 Defining and Applying Permissions Using RBAC  
 ```
 oc adm policy add-cluster-role-to-user cluster-admin username
@@ -241,7 +330,6 @@ Default roles that can be added or removed from a project level:
 -	**view** Users with this role can view project resources, but cannot modify project resources.
 
 System users: system:admin, system:openshift-registry, and system:node:node1.example.com.
-
 Managing Sensitive Information with Secrets  
 ```
 oc create secret generic secret_name \
@@ -256,6 +344,7 @@ oc set volume dc/demo \
 > --secret-name=demo-secret \
 > --mount-path=/app-secrets
 ```
+
 ### Difference between add-cluster-role-to-user and add-role-to-user
 
 1. oc adm policy add-cluster-role-to-user
@@ -359,6 +448,149 @@ $ oc policy add-role-to-user view alice -n project2
 $ oc describe rolebinding.rbac -n project1
 ```
 
+### Creating roles and cluster roles 
+
+```shell
+luiz---------------->>>$oc create role  podview --verb=get --resource=pod -n ex280-developers 
+role.rbac.authorization.k8s.io/podview created
+luiz---------------->>>$
+luiz---------------->>>$
+luiz---------------->>>$oc get role
+No resources found in ex280-users-authentication namespace.
+luiz---------------->>>$oc get role -n ex280-developers 
+NAME      CREATED AT
+podview   2024-10-12T13:14:54Z
+luiz---------------->>>$oc project ex280-developers 
+Now using project "ex280-developers" on server "https://api.crc.testing:6443".
+luiz---------------->>>$oc get roles
+NAME      CREATED AT
+podview   2024-10-12T13:14:54Z
+luiz---------------->>>$oc adm policy add-role-to-user podview lisa --role-namespace=ex280-developers -n ex280-developers
+luiz---------------->>>$oc login -u lisa 
+Logged into "https://api.crc.testing:6443" as "lisa" using existing credentials.
+
+You have access to the following projects and can switch between them with 'oc project <projectname>':
+
+    ex280-developers
+  * ex280-users-authentication
+
+Using project "ex280-users-authentication".
+luiz---------------->>>$oc get pods -n ex280-developers
+No resources found in ex280-developers namespace.
+```
+
+#### Creating a cluster role
+
+Cluster role verbs define the specific actions that users or service accounts are allowed to perform on Kubernetes or OpenShift resources. 
+
+**Common Cluster Role Verbs:**
+1. **get**:
+   - Allows reading or retrieving a specific resource (e.g., a Pod, Service, Namespace).
+   - Example: Viewing the details of a single resource.
+
+2. **list**:
+   - Allows listing multiple resources of a specific type.
+   - Example: Listing all Pods in a namespace.
+
+3. **watch**:
+   - Allows subscribing to updates about changes to a resource (e.g., watching for changes to a Pod or Namespace in real-time).
+   - Example: Monitoring a resource for changes without having to repeatedly query it.
+
+4. **create**:
+   - Allows creating new instances of a resource.
+   - Example: Creating a new Pod or Service.
+
+5. **update**:
+   - Allows modifying existing resources.
+   - Example: Updating the specification of a Deployment or Service.
+
+6. **patch**:
+   - Allows applying a partial update to a resource.
+   - Example: Patching specific fields of a resource without replacing the entire resource.
+
+7. **delete**:
+   - Allows deleting resources.
+   - Example: Deleting a Pod or a Namespace.
+
+8. **deletecollection**:
+   - Allows deleting a collection of resources all at once.
+   - Example: Deleting all Pods that match certain criteria.
+
+9. **edit**:
+   - A higher-level verb that implies creating, deleting, and updating resources. This is often used in more general roles (though it’s not a specific verb in YAML).
+   - Note: This is typically used in default roles but isn’t an actual verb that can be set in the YAML.
+
+10. **bind**:
+    - Allows granting roles or bindings to other users or service accounts.
+    - Example: Assigning RBAC permissions to others.
+
+11. **impersonate**:
+    - Allows acting as another user, group, or service account.
+    - Example: Impersonating another user for debugging or testing purposes.
+
+12. **escalate**:
+    - Allows increasing or "escalating" privileges, typically to assign roles that the current user might not already have.
+    - Example: Granting higher permissions than what a user is allowed to assign to themselves or others.
+
+
+```yaml
+luiz---------------->>>$oc create clusterrole podviewonly --verb=get --resource=pod --dry-run=client -o yaml 
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  creationTimestamp: null
+  name: podviewonly
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+
+luiz---------------->>>$oc adm policy add-cluster-role-to-user podviewonly pereira
+clusterrole.rbac.authorization.k8s.io/podviewonly added: "pereira"
+```
+
+**Creating a clusterrolebinding**
+```yaml 
+luiz---------------->>>$oc create clusterrolebinding cluster-admin-role-ex280 --clusterrole=view --group=developers
+clusterrolebinding.rbac.authorization.k8s.io/cluster-admin-role-ex280 created
+luiz---------------->>>$oc get groups
+NAME            USERS
+administrator   luiz
+developers      bob, john
+linux           lisa
+luiz---------------->>>$oc login -u bob
+Logged into "https://api.crc.testing:6443" as "bob" using existing credentials.
+
+You have access to 70 projects, the list has been suppressed. You can list all projects with 'oc projects'
+
+Using project "ex280-users-authentication".
+```
+
+ClusterRole for developers:
+This rule allows developers to perform get, list, and watch actions on namespaces, but it excludes those prefixed with openshift-.
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: developer-view-projects
+rules:
+  - apiGroups: [""]  # "" indicates the core API group (for resources like pods, services, etc.)
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+    resourceNames:
+      - "!openshift-*"
+```
+
+```yaml
+luiz---------------->>>$oc get clusterrolebindings | grep ex280
+cluster-admin-role-ex280                                                    ClusterRole/view                                                                        5m
+luiz---------------->>>$oc delete clusterrolebindings cluster-admin-role-ex280
+clusterrolebinding.rbac.authorization.k8s.io "cluster-admin-role-ex280" deleted
+```
+
 ### Security Context Constraints (SCCs)
 List security context constraints
 ```
@@ -374,7 +606,17 @@ restricted
 ```
 
 ### Create a Service Account
+
+- A Service account SA is a user account used by  a pod to determine pod access privileges to system resources
+- The default serviceaccount used by pods allows for very limited access to cluster resources
+- Sometimes a Pod cannont run with this very restricted ServiceAcccount
+- After creating the ServiceAccount, specific access privileges need to be set
+
 Create a service account apache-account:
+
+- Optionally, add `-n namespace` to assign the SA to a specific namespace
+- After creating the SA, use a role binding to connect the SA to a specific role
+
 ```
 $ oc create serviceaccount apache-account
 ```
@@ -392,6 +634,177 @@ spec:
   template:
     spec:
       serviceAccountName: apache-account
+```
+### Security Context Constraints 
+
+- A security context constraint SCC is an OpenShift resource, similar to the Kubernetes Security Context resource, that restricts access to resources
+- The purpose is to limit access from a Pod to the host environment
+- Different SCCs are available to control:
+- - Running privileged containers
+- - Requesting Additional capabilities to a container
+- - Using host directories as volumes
+- - Changind SELinux context of a container
+- - Changing the user ID
+- Use SCCs may be necessary to run community containers that by default don't work under the right OpenShift security restrictions
+
+Commands:
+```bash
+oc get scc 
+oc describe scc <scc-name>
+oc describe pod <podname> | grep scc
+```
+
+if a pod can't run due to an SCC, use: 
+```bash
+oc get pod <name> -o yaml | oc adm policy scc-subject-review -f -
+```
+
+```bash
+luiz---------------->>>$oc get scc
+NAME                              PRIV    CAPS                   SELINUX     RUNASUSER          FSGROUP     SUPGROUP    PRIORITY     READONLYROOTFS   VOLUMES
+anyuid                            false   <no value>             MustRunAs   RunAsAny           RunAsAny    RunAsAny    10           false            ["configMap","csi","downwardAPI","emptyDir","ephemeral","persistentVolumeClaim","projected","secret"]
+hostaccess                        false   <no value>             MustRunAs   MustRunAsRange     MustRunAs   RunAsAny    <no value>   false            ["configMap","csi","downwardAPI","emptyDir","ephemeral","hostPath","persistentVolumeClaim","projected","secret"]
+hostmount-anyuid                  false   <no value>             MustRunAs   RunAsAny           RunAsAny    RunAsAny    <no value>   false            ["configMap","csi","downwardAPI","emptyDir","ephemeral","hostPath","nfs","persistentVolumeClaim","projected","secret"]
+hostnetwork                       false   <no value>             MustRunAs   MustRunAsRange     MustRunAs   MustRunAs   <no value>   false            ["configMap","csi","downwardAPI","emptyDir","ephemeral","persistentVolumeClaim","projected","secret"]
+hostnetwork-v2                    false   ["NET_BIND_SERVICE"]   MustRunAs   MustRunAsRange     MustRunAs   MustRunAs   <no value>   false            ["configMap","csi","downwardAPI","emptyDir","ephemeral","persistentVolumeClaim","projected","secret"]
+hostpath-provisioner              true    <no value>             RunAsAny    RunAsAny           RunAsAny    RunAsAny    <no value>   false            ["*"]
+machine-api-termination-handler   false   <no value>             MustRunAs   RunAsAny           MustRunAs   MustRunAs   <no value>   false            ["downwardAPI","hostPath"]
+nonroot                           false   <no value>             MustRunAs   MustRunAsNonRoot   RunAsAny    RunAsAny    <no value>   false            ["configMap","csi","downwardAPI","emptyDir","ephemeral","persistentVolumeClaim","projected","secret"]
+nonroot-v2                        false   ["NET_BIND_SERVICE"]   MustRunAs   MustRunAsNonRoot   RunAsAny    RunAsAny    <no value>   false            ["configMap","csi","downwardAPI","emptyDir","ephemeral","persistentVolumeClaim","projected","secret"]
+privileged                        true    ["*"]                  RunAsAny    RunAsAny           RunAsAny    RunAsAny    <no value>   false            ["*"]
+restricted                        false   <no value>             MustRunAs   MustRunAsRange     MustRunAs   RunAsAny    <no value>   false            ["configMap","csi","downwardAPI","emptyDir","ephemeral","persistentVolumeClaim","projected","secret"]
+restricted-v2                     false   ["NET_BIND_SERVICE"]   MustRunAs   MustRunAsRange     MustRunAs   RunAsAny    <no value>   false            ["configMap","csi","downwardAPI","emptyDir","ephemeral","persistentVolumeClaim","projected","secret"]
+
+luiz---------------->>>$oc describe scc/anyuid
+Name:						anyuid
+Priority:					10
+Access:						
+  Users:					<none>
+  Groups:					system:cluster-admins
+Settings:					
+  Allow Privileged:				false
+  Allow Privilege Escalation:			true
+  Default Add Capabilities:			<none>
+  Required Drop Capabilities:			MKNOD
+  Allowed Capabilities:				<none>
+  Allowed Seccomp Profiles:			<none>
+  Allowed Volume Types:				configMap,csi,downwardAPI,emptyDir,ephemeral,persistentVolumeClaim,projected,secret
+  Allowed Flexvolumes:				<all>
+  Allowed Unsafe Sysctls:			<none>
+  Forbidden Sysctls:				<none>
+  Allow Host Network:				false
+  Allow Host Ports:				false
+  Allow Host PID:				false
+  Allow Host IPC:				false
+  Read Only Root Filesystem:			false
+  Run As User Strategy: RunAsAny		
+    UID:					<none>
+    UID Range Min:				<none>
+    UID Range Max:				<none>
+  SELinux Context Strategy: MustRunAs		
+    User:					<none>
+    Role:					<none>
+    Type:					<none>
+    Level:					<none>
+  FSGroup Strategy: RunAsAny			
+    Ranges:					<none>
+  Supplemental Groups Strategy: RunAsAny	
+    Ranges:					<none>
+
+
+luiz---------------->>>$oc run pod --image=nginx
+Warning: would violate PodSecurity "restricted:v1.24": allowPrivilegeEscalation != false (container "pod" must set securityContext.allowPrivilegeEscalation=false), unrestricted capabilities (container "pod" must set securityContext.capabilities.drop=["ALL"]), runAsNonRoot != true (pod or container "pod" must set securityContext.runAsNonRoot=true), seccompProfile (pod or container "pod" must set securityContext.seccompProfile.type to "RuntimeDefault" or "Localhost")
+pod/pod created
+luiz---------------->>>$oc get pod pod -o yaml | oc adm policy scc-subject-review  -f - 
+RESOURCE   ALLOWED BY   
+Pod/pod    anyuid       
+luiz---------------->>>$oc get pod
+NAME   READY   STATUS    RESTARTS   AGE
+pod    1/1     Running   0          50s
+
+```
+
+Running a pod as an specific SCC
+
+```bash
+luiz---------------->>>$oc new-app --name scc-nginx --image nginx:latest
+--> Found container image 7f553e8 (9 days old) from Docker Hub for "nginx:latest"
+
+    * An image stream tag will be created as "scc-nginx:latest" that will track this image
+
+--> Creating resources ...
+    imagestream.image.openshift.io "scc-nginx" created
+    deployment.apps "scc-nginx" created
+    service "scc-nginx" created
+--> Success
+    Application is not exposed. You can expose services to the outside world by executing one or more of the commands below:
+     'oc expose service/scc-nginx' 
+    Run 'oc status' to view your app.
+luiz---------------->>>$oc get deployments
+NAME        READY   UP-TO-DATE   AVAILABLE   AGE
+scc-nginx   0/1     1            0           4s
+luiz---------------->>>$oc get pods
+NAME                         READY   STATUS             RESTARTS     AGE
+httpd                        1/1     Running            0            6m8s
+pod                          1/1     Running            0            8m9s
+scc-nginx-589558495f-sjfg4   0/1     CrashLoopBackOff   1 (3s ago)   6s
+luiz---------------->>>$oc logs scc-nginx-589558495f-sjfg4
+/docker-entrypoint.sh: /docker-entrypoint.d/ is not empty, will attempt to perform configuration
+/docker-entrypoint.sh: Looking for shell scripts in /docker-entrypoint.d/
+/docker-entrypoint.sh: Launching /docker-entrypoint.d/10-listen-on-ipv6-by-default.sh
+10-listen-on-ipv6-by-default.sh: info: can not modify /etc/nginx/conf.d/default.conf (read-only file system?)
+/docker-entrypoint.sh: Sourcing /docker-entrypoint.d/15-local-resolvers.envsh
+/docker-entrypoint.sh: Launching /docker-entrypoint.d/20-envsubst-on-templates.sh
+/docker-entrypoint.sh: Launching /docker-entrypoint.d/30-tune-worker-processes.sh
+/docker-entrypoint.sh: Configuration complete; ready for start up
+2024/10/12 14:34:30 [warn] 1#1: the "user" directive makes sense only if the master process runs with super-user privileges, ignored in /etc/nginx/nginx.conf:2
+nginx: [warn] the "user" directive makes sense only if the master process runs with super-user privileges, ignored in /etc/nginx/nginx.conf:2
+2024/10/12 14:34:30 [emerg] 1#1: mkdir() "/var/cache/nginx/client_temp" failed (13: Permission denied)
+nginx: [emerg] mkdir() "/var/cache/nginx/client_temp" failed (13: Permission denied)
+
+luiz---------------->>>$oc create sa ex-nginx
+serviceaccount/ex-nginx created
+
+luiz---------------->>>$oc get sa
+NAME       SECRETS   AGE
+builder    1         6m56s
+default    1         6m56s
+deployer   1         6m55s
+ex-nginx   1         3s
+
+luiz---------------->>>$oc adm policy add-scc-to-user anyuid -z ex-nginx
+clusterrole.rbac.authorization.k8s.io/system:openshift:scc:anyuid added: "ex-nginx"
+
+luiz---------------->>>$oc set serviceaccount deployment/scc-nginx ex-nginx
+deployment.apps/scc-nginx serviceaccount updated
+
+luiz---------------->>>$oc get pods
+NAME                         READY   STATUS             RESTARTS      AGE
+httpd                        1/1     Running            0             10m
+pod                          1/1     Running            0             12m
+scc-nginx-56ff4dc4c9-gms4s   0/1     CrashLoopBackOff   3 (50s ago)   100s
+scc-nginx-589558495f-sjfg4   0/1     CrashLoopBackOff   5 (50s ago)   4m2s
+
+luiz---------------->>>$oc get deployment
+NAME        READY   UP-TO-DATE   AVAILABLE   AGE
+scc-nginx   0/1     1            0           4m11s
+
+luiz---------------->>>$oc rollout restart deployment scc-nginx
+deployment.apps/scc-nginx restarted
+luiz---------------->>>$oc get pods
+NAME                         READY   STATUS              RESTARTS      AGE
+httpd                        1/1     Running             0             10m
+pod                          1/1     Running             0             12m
+scc-nginx-56ff4dc4c9-gms4s   0/1     CrashLoopBackOff    4 (13s ago)   118s
+scc-nginx-7fd8995d49-f742l   0/1     ContainerCreating   0             2s
+
+luiz---------------->>>$oc get pods
+NAME                         READY   STATUS    RESTARTS   AGE
+httpd                        1/1     Running   0          10m
+pod                          1/1     Running   0          12m
+scc-nginx-7fd8995d49-f742l   1/1     Running   0          6s
+luiz---------------->>>$
+
 ```
 
 ## Quota and Limits
@@ -424,44 +837,115 @@ pods        0     10
 $ oc get quota
 NAME       AGE   REQUEST                                                                                       LIMIT
 my-quota   4s    cpu: 0/2, memory: 0/1G, pods: 0/3, replicationcontrollers: 0/6, secrets: 6/6, services: 0/6 
+
+$ oc create secret generic secre1455 --from-file htpasswd 
+error: failed to create secret secrets "secre1455" is forbidden: exceeded quota: rocky-quota, requested: secrets=1, used: secrets=10, limited: secrets=10
+
+$ oc get quota
+NAME          AGE   REQUEST                                                                                          LIMIT
+rocky-quota   15m   cpu: 0/2, memory: 0/1Gi, pods: 0/3, replicationcontrollers: 0/6, secrets: 10/10, services: 0/5 
 ```
 
 ### Delete All Quota
 ```
 $ oc delete quota --all -n project1
 ```
-### Create Limits
+### Create limit ranges
+A limit range, defined by a LimitRange object, restricts resource consumption in a project. In the project you can set specific resource limits for a pod, container, image, image stream, or persistent volume claim (PVC).
+
 File `project1-resource-limits.yaml`:
 ```yaml
 apiVersion: "v1"
 kind: "LimitRange"
 metadata:
-  name: "project1-resource-limits"
+  name: "resource-limits" 
 spec:
   limits:
-    - type: "Pod"
+    - type: "Pod" 
       max:
         cpu: "2"
         memory: "1Gi"
       min:
         cpu: "200m"
-        memory: "16Mi"
-    - type: "Container"
+        memory: "6Mi"
+    - type: "Container" 
       max:
         cpu: "2"
         memory: "1Gi"
       min:
         cpu: "100m"
-        memory: "8Mi"
-      default:
+        memory: "4Mi"
+      default: 
         cpu: "300m"
         memory: "200Mi"
-      defaultRequest:
+      defaultRequest: 
         cpu: "200m"
         memory: "100Mi"
-      maxLimitRequestRatio:
+      maxLimitRequestRatio: 
         cpu: "10"
+    - type: openshift.io/Image 
+      max:
+        storage: 1Gi
+    - type: openshift.io/ImageStream 
+      max:
+        openshift.io/image-tags: 20
+        openshift.io/images: 30
+    - type: "PersistentVolumeClaim" 
+      min:
+        storage: "2Gi"
+      max:
+        storage: "50Gi"
 ```
+### Container limits
+
+If the Pod spec does not specify a container resource memory or limit, the default or defaultRequest CPU and memory values for containers specified in the limit range object are assigned to the container.
+
+
+```yaml
+apiVersion: "v1"
+kind: "LimitRange"
+metadata:
+  name: "resource-limits" 
+spec:
+  limits:
+    - type: "Container"
+      max:
+        cpu: "2" 
+        memory: "1Gi" 
+      min:
+        cpu: "100m" 
+        memory: "4Mi" 
+      default:
+        cpu: "300m" 
+        memory: "200Mi" 
+      defaultRequest:
+        cpu: "200m" 
+        memory: "100Mi" 
+      maxLimitRequestRatio:
+        cpu: "10" 
+
+```
+### Pod limits
+
+```yaml
+apiVersion: "v1"
+kind: "LimitRange"
+metadata:
+  name: "resource-limits" 
+spec:
+  limits:
+    - type: "Pod"
+      max:
+        cpu: "2" 
+        memory: "1Gi" 
+      min:
+        cpu: "200m" 
+        memory: "6Mi" 
+      maxLimitRequestRatio:
+        cpu: "10" 
+```
+
+
 
 ```
 $ oc create -f project1-resource-limits.yaml -n project1
@@ -477,6 +961,33 @@ Pod         cpu       200m  2    -                -              -
 Pod         memory    16Mi  1Gi  -                -              -
 Container   cpu       100m  2    200m             300m           10
 Container   memory    8Mi   1Gi  100Mi            200Mi          -
+```
+
+**Create resource quota for Project Rocky:**
+> Pods = 3
+> CPU = 2
+> Services = 6
+> Memory = 1Gi
+> Secrets = 6
+> Replication controllers = 6
+
+```shell 
+$ oc create quota rocky-quota --hard=pods=3,cpu=2,services=5,memory=1Gi,secrets=6,replicationcontrollers=6 --dry-run=client -o yaml
+
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  creationTimestamp: null
+  name: rocky-quota
+spec:
+  hard:
+    cpu: "2"
+    memory: 1Gi
+    pods: "3"
+    replicationcontrollers: "6"
+    secrets: "6"
+    services: "5"
+status: {}
 ```
 
 ### List Nodes Including Labels
@@ -1107,25 +1618,205 @@ With network policies, you can configure isolation policies for individual pods.
 ![Alt text](image.png)
 
 
+The following network policy applies to any pods with the deployment="product-catalog" label in the network-1 namespace. The network-2 namespace has the network=network-2 label. The policy allows TCP traffic over port 8080 from pods whose label is role="qa" in namespaces with the network=network-2 label.
+```yaml 
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: network-1-policy
+  namespace: network-1
+spec:
+  podSelector:  
+    matchLabels:
+      deployment: product-catalog
+  ingress:  
+  - from:  
+    - namespaceSelector:
+        matchLabels:
+          network: network-2
+      podSelector:
+        matchLabels:
+          role: qa
+    ports:  
+    - port: 8080
+      protocol: TCP
+```
 
+The following network policy allows traffic from any pods in namespaces with the `network=network-1` label into any pods and ports in the `network-2` namespace. This policy is less restrictive than the `network-1` policy, because it does not restrict traffic from any pods in the network-1 namespace.
+```yaml 
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: network-2-policy
+  namespace: network-2
+spec:
+  podSelector: {}
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          network: network-1
+```
+
+**Deny-all Network Policies**
+If a pod is matched by selectors in one or more network policies, then the pod accepts only connections that at least one of those network policies allows. A strict example is a policy to deny-all ingress traffic to pods in your project, including from other pods inside your project. 
+
+**An empty pod selector means that this policy applies to all pods in this project.** 
+```yaml
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: default-deny
+spec:
+  podSelector: {}
+```
 
 ```yaml
-apiVersion: v1
-kind: Service
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
 metadata:
-  name: network-svc
-  namespace: network-review
-  annotations:
-    service.beta.openshift.io/serving-cert-secret-name: service-cert
+  name: default-deny-ingress
 spec:
-  selector:
-    app: network-svc
-  ports:
-    - port: 80
-      targetPort: 8085
-      name: http
+  podSelector: {}
+  policyTypes:
+  - Ingress
 
 ```
+
+**Allow all ingress traffic **
+```yaml
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-all-ingress
+spec:
+  podSelector: {}
+  ingress:
+  - {}
+  policyTypes:
+  - Ingress
+```
+
+**Default deny all egress traffic 
+**
+```yaml
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+```
+
+**Allow all egress traffic 
+**
+```yaml
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-all-egress
+spec:
+  podSelector: {}
+  egress:
+  - {}
+  policyTypes:
+  - Egress
+```
+
+**Default deny all ingress and all egress traffic **
+
+```yaml
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+```
+
+**Allowing Access from OpenShift Cluster Services**
+
+```yaml
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-openshift-ingress
+spec:
+  podSelector: {}
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          policy-group.network.openshift.io/ingress: ""
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-openshift-monitoring
+spec:
+  podSelector: {}
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          network.openshift.io/policy-group: monitoring
+```
+
+#### Behavior of to and from selectors 
+There are four kinds of selectors that can be specified in an ingress from section or egress to section:
+
+**podSelector:** This selects particular Pods in the same namespace as the NetworkPolicy which should be allowed as ingress sources or egress destinations.
+
+**namespaceSelector:** This selects particular namespaces for which all Pods should be allowed as ingress sources or egress destinations.
+
+**namespaceSelector** and **podSelector**: A single `to/from` entry that specifies both `namespaceSelector` and `podSelector` selects particular Pods within particular namespaces. 
+
+This example combines the selectors into one rule, and thereby allows access only from pods with the `app=mobile` label in namespaces with the `network=dev` label. This sample shows a logical AND statement.
+```yaml
+...output omitted...
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          network: dev
+      podSelector:
+        matchLabels:
+          app: mobile
+```
+
+By changing the `podSelector` field in the previous example to be an item in the from list, any pods in namespaces with the `network=dev` label or any pods with the `app=mobile` label from any namespace can reach the pods that match the top-level podSelector field. This sample shows a logical `OR` statement.
+```yaml
+...output omitted...
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          network: dev
+    - podSelector:
+        matchLabels:
+          app: mobile
+
+```
+> Network policies do not block traffic from pods that use host networking to pods in the same node.
+> 
+> For example, on a single-node cluster, a deny-all network policy does not prevent ingress pods that use the host network strategy from accessing application pods.
+> 
+> Inside a node, traffic from pods that use host networking is treated differently from traffic from other pods. Network policies control only internal traffic from pods that do not use host networking.
+> 
+> When traffic leaves a node, no such different treatment exists, and network policies control all traffic from other nodes.
+
+[Kubernetes official documentation](https://kubernetes.io/docs/concepts/services-networking/network-policies/#what-you-can-t-do-with-network-policies-at-least-not-yet)
 
 
 ## OpenShift SDN 
