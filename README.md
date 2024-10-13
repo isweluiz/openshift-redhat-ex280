@@ -2132,6 +2132,97 @@ replicaset.apps/sample-7c8cc8cfcd   0         0         0       39m
 replicaset.apps/sample-7cb569b4bf   0         0         0       20m
 ```
 
+## OpenShift Storage
+- [Storage Documentation](https://docs.openshift.com/container-platform/4.14/storage/index.html)
+
+* Container storage by default is [ephemeral](https://docs.openshift.com/container-platform/4.14/storage/understanding-ephemeral-storage.html#understanding-ephemeral-storage)
+* Upon deletion of a container, all file and data inside it are also deleted
+* Container can use volumer or bind mounts to provide persistent storage
+* Bind mounts are useful in stand-alone container; volumes are needed to decouple the storage from the container
+* Using volumes guarantees that storage outlives the container lifetime 
+  
+**Storage class**
+A storage class provides a way for administrators to describe the classes of storage they offer. Different classes might map to quality of service levels, backup policies, arbitrary policies determined by the cluster administrators.
+
+**VMware vSphere’s Virtual Machine Disk (VMDK) volumes**
+Virtual Machine Disk (VMDK) is a file format that describes containers for virtual hard disk drives that is used in virtual machines.
+
+**How storage works in OpenShift** 
+* [OpenShift uses persistent volumes ](https://docs.openshift.com/container-platform/4.14/storage/understanding-persistent-storage.html#understanding-persistent-storage)to provision storage
+* Storage can be provisioned in a static or dynamic way
+* Static provisioning means that the cluster administrator creates the persistent volumes manually
+* Dynamic provisioning uses storage classes to create persistent volumes on demand
+* OpenSHift provides storage classes as the default solution
+* Developers are using persistent volume claims to dynamically add storage to the application
+
+![Alt text](image-3.png)
+
+```yaml
+kind: Pod
+apiVersion: v1
+metadata:
+  name: busybox-storage
+spec:
+  containers:
+  - name: my-busybox-1
+    image: busybox:1.28
+    volumeMounts:
+      - mountPath: "/data"
+        name: data
+    command: [ "sleep", "1000000" ]
+
+  - name: my-busybox-2
+    image: busybox:1.28
+    volumeMounts:
+      - mountPath: "/data"
+        name: data
+    command: [ "sleep", "1000000" ]  
+
+  volumes:
+    - name: data
+      emptyDir: {}
+```
+
+```bash
+luiz---------------->>>$oc get pods
+NAME              READY   STATUS    RESTARTS   AGE
+busybox-storage   2/2     Running   0          4s
+
+luiz---------------->>>$oc describe pod busybox-storage 
+........
+Containers:
+  my-busybox-1:
+    Container ID:  cri-o://4b3269c9a8413c024f796608e929a6200d0b4ed8073bb352770067cc0c2431c8
+    Image:         busybox:1.28
+............
+    Environment:    <none>
+    Mounts:
+      /data from data (rw)
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-qvlqm (ro)
+  my-busybox-2:
+    Container ID:  cri-o://f5fec94aaad8d6ff2fe7acab6baa5c06198502aff99398169b641837f0663552
+    Image:         busybox:1.28
+...........
+    Environment:    <none>
+    Mounts:
+      /data from data (rw)
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-qvlqm (ro)
+.......
+
+luiz---------------->>>$oc exec -it busybox-storage -c my-busybox-2 -- sh
+bin   data  dev   etc   home  proc  root  run   sys   tmp   usr   var
+/ # cd data/
+/data # echo "busybox2-storage-data" > busybox2.txt
+/data # ls
+busybox2.txt
+/data # cat busybox2.txt 
+busybox2-storage-data
+/data # exit
+luiz---------------->>>$oc exec -it busybox-storage -c my-busybox-2 -- cat /data/busybox2.txt
+busybox2-storage-data
+luiz---------------->>>$oc exec -it busybox-storage -c my-busybox-1 -- cat /data/busybox2.txt
+busybox2-storage-data
+```
 
 
 ### Various OpenShift Samples
