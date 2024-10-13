@@ -71,3 +71,9 @@ Finally, the CA signs the CSR to create a certificate.
   - `-days 1065`: Specifies that the certificate is valid for 1065 days (approximately 3 years).
   
 This final certificate `tls.crt` can now be used to secure services like web servers, enabling TLS/SSL encryption.
+
+### OpenSSL Video Series
+
+- [Official Documentation](https://wiki.openssl.org/index.php/Command_Line_Utilities)
+
+[![YouTube Video](https://img.youtube.com/vi/O1OaJmrRHrw/0.jpg)](https://www.youtube.com/watch?v=O1OaJmrRHrw&list=PLgBMtP0_D_afzNG7Zs2jr8FSoyeU4yqhi)
