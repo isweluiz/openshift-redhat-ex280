@@ -722,6 +722,19 @@ luiz---------------->>>$oc get pod
 NAME   READY   STATUS    RESTARTS   AGE
 pod    1/1     Running   0          50s
 
+
+luiz---------------->>>$oc adm policy who-can delete-user delete deployment
+Warning: the server doesn't have a resource type 'delete'
+resourceaccessreviewresponse.authorization.openshift.io/<unknown> 
+
+Namespace: ex280-lesson6-lab
+Verb:      delete-user
+Resource:  delete
+
+Users:  kubeadmin
+        luiz
+        system:admin
+..............
 ```
 
 Running a pod as an specific SCC
@@ -805,7 +818,93 @@ pod                          1/1     Running   0          12m
 scc-nginx-7fd8995d49-f742l   1/1     Running   0          6s
 luiz---------------->>>$
 
+luiz---------------->>>$oc get pod scc-nginx-7fd8995d49-f742l -o yaml | oc adm policy scc-subject-review -f - 
+RESOURCE                         ALLOWED BY   
+Pod/scc-nginx-7fd8995d49-f742l   anyuid 
 ```
+#### Running Containers as Non-root
+
+- By default, OpenShift denies containers to run as root
+- Many containers run as root by default
+- A container that runs as root has root privileges on the container host as well, and should be avoided
+- If you build your own container images, specify which user it should run
+- Frequently, non-root alternatives are available for the images you're using
+- - quay.io images are made with OpenShift in Mind
+- - bitnami has reworked commom images to be started as non-root
+- Non-root containers cannont bind to a privileged port
+- In OpenShift, this is not an issue, as containers are accessed through services and routes
+- Configure the port on the service/route, not on the pod
+- Also, non-root container will have limitations accessing files
+
+
+**ServiceAccount and runAsUser Interaction:**
+* Kubernetes: If you specify a ServiceAccount without a runAsUser, the Pod will run with the UID defined by the container image, unless a PodSecurityPolicy applies that specifies a different runAsUser.
+* OpenShift: In OpenShift, if you use a ServiceAccount, the runAsUser might be automatically assigned based on the SecurityContextConstraints (SCC) applied to that ServiceAccount. 
+* * For example, a restricted SCC may enforce a particular UID range, which applies to all Pods that use that ServiceAccount, unless explicitly overridden.
+
+```bash
+luiz---------------->>>$oc new-app --image bitnami/nginx:latest --name=nginx
+--> Found container image c15e168 (9 days old) from Docker Hub for "bitnami/nginx:latest"
+
+    * An image stream tag will be created as "nginx:latest" that will track this image
+
+--> Creating resources ...
+    imagestream.image.openshift.io "nginx" created
+    deployment.apps "nginx" created
+    service "nginx" created
+--> Success
+    Application is not exposed. You can expose services to the outside world by executing one or more of the commands below:
+     'oc expose service/nginx' 
+    Run 'oc status' to view your app.
+luiz---------------->>>$oc get svc
+NAME    TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)             AGE
+nginx   ClusterIP   10.217.5.171   <none>        8080/TCP,8443/TCP   15s
+
+```
+
+
+Example: Using a ServiceAccount Without runAsUser:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: example-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: example
+  template:
+    metadata:
+      labels:
+        app: example
+    spec:
+      serviceAccountName: my-serviceaccount  # Specifying the ServiceAccount
+      containers:
+        - name: my-app
+          image: my-app-image
+```
+If no runAsUser is specified, Kubernetes/OpenShift will either:
+* Use the default UID of the container image.
+* Use the UID enforced by the SCC or PodSecurityPolicy applied to the ServiceAccount.
+
+Example: Using a ServiceAccount with runAsUser:
+```yaml
+apiVersion: apps/v1
+......
+    spec:
+      serviceAccountName: my-serviceaccount
+      containers:
+        - name: my-app
+          image: my-app-image
+          securityContext:
+            runAsUser: 1001  # Explicitly setting runAsUser
+```
+In this case, the Pod will run as user ID 1001, overriding any default from the container image or policies attached to the ServiceAccount.
+
+
+
 
 ## Quota and Limits
 A project can contain multiple `ResourceQuota` objects.
@@ -1847,14 +1946,191 @@ oc get network/cluster -o yaml
 * If a network policy exists, it will block all traffic with the exception of allowed Ingress and Egress traffic
 
 
+## Controlling Pod Placement
 
+#### Applying labels to nodes
+* A label is an arbitrary key-value pair that can be used as a selector for Pod placement 
+* Use `oc label node worker.example.com env=test` to set the label 
+* Use `oc label node worker1.example.com env=prod --overwrite` to overwrite
+* Use `oc label node worker1.example.com env-` to remove the label
+* use `oc get ... --show-labels` to show labels set on any type of resource
 
+```shell
+luiz---------------->>>$oc label node crc-8cf2w-master-0 environment=development 
+node/crc-8cf2w-master-0 labeled
+luiz---------------->>>$oc describe node crc-8cf2w-master-0 | head
+Name:               crc-8cf2w-master-0
+Roles:              control-plane,master,worker
+Labels:             beta.kubernetes.io/arch=amd64
+                    beta.kubernetes.io/os=linux
+                    env=lab-environment
+                    environment=development
+                    kubernetes.io/arch=amd64
+                    kubernetes.io/hostname=crc-8cf2w-master-0
+                    kubernetes.io/os=linux
+                    node-role.kubernetes.io/control-plane=
 
+luiz---------------->>>$oc label node crc-8cf2w-master-0 env-
+node/crc-8cf2w-master-0 unlabeled
 
+luiz---------------->>>$oc describe node crc-8cf2w-master-0 | head
+Name:               crc-8cf2w-master-0
+Roles:              control-plane,master,worker
+Labels:             beta.kubernetes.io/arch=amd64
+                    beta.kubernetes.io/os=linux
+                    environment=development
+                    kubernetes.io/arch=amd64
+                    kubernetes.io/hostname=crc-8cf2w-master-0
+                    kubernetes.io/os=linux
+                    node-role.kubernetes.io/control-plane=
+                    node-role.kubernetes.io/master=
+```
 
+#### Applying labels to machine sets
+* A machine set is a group of machines that is created when installing OpenShift using full stack automation
+* Machine sets can be labeled so that nodes generated from the machine set will automatically get a label
+* To see which nodes are in which machine set, use `oc get machines -n openshift-machine-api -o wide`
+* Use `oc edit machineset ...` to set a label in the machine set `spec.metadata`
+* **Notice that nodes that were already generated from the machine set will not be updated with the new label**
 
+```shell
+luiz---------------->>>$oc get machines -n openshift-machine-api -o wide
+NAME                 PHASE     TYPE   REGION   ZONE   AGE    NODE                 PROVIDERID   STATE
+crc-8cf2w-master-0   Running                          509d   crc-8cf2w-master-0            
 
+luiz---------------->>>$oc describe machines crc-8cf2w-master-0  -n openshift-machine-api | head -n 20
+Name:         crc-8cf2w-master-0
+Namespace:    openshift-machine-api
+Labels:       machine.openshift.io/cluster-api-cluster=crc-8cf2w
+              machine.openshift.io/cluster-api-machine-role=master
+              machine.openshift.io/cluster-api-machine-type=master
+Annotations:  <none>
+API Version:  machine.openshift.io/v1beta1
+Kind:         Machine
+Metadata:
+  Creation Timestamp:  2023-05-22T11:40:22Z
+  Finalizers:
+    machine.machine.openshift.io
+  Generation:  2
+  Managed Fields:
+    API Version:  machine.openshift.io/v1beta1
+    Fields Type:  FieldsV1
+    fieldsV1:
+      f:metadata:
+        f:labels:
+          .:
+```
 
+#### Configuring NodeSelector on Pods
+* Infrastructure-related Pods in OpenShift cluster are configured to run on a controller node
+* Use **nodeSelector** on the Deployment or DeploymentConfig to configure its Pods to run on a node that a specific label
+* Use `oc edit` to apply nodeSelector to existing Deployments or DeploymentConfigs
+* If a Deployment is configured with a nodeSelector that doesn't match any node label, the Pods will show as pending
+* Fix this by setting Deployment `spec.template.spec.nodeSelector` to the desired key-value pair
+
+#### Configuring NodeSelector on Projects
+* `nodeSelector` can be set on a project such that resources created in the deployment are automatically placed on the right nodes: `oc adm new-project rocky-project --node-selector env=development`
+* To configure a default `nodeSelector` on an existing project, add an annotation to its underlying namespace resource: `oc annotate namespace rocky-project openshift.io/node-selector=test --overwrite`
+  
+```yaml 
+Volumes:
+  kube-api-access-ftmvt:
+    Type:                    Projected (a volume that contains injected data from multiple sources)
+    TokenExpirationSeconds:  3607
+    ConfigMapName:           kube-root-ca.crt
+    ConfigMapOptional:       <nil>
+    DownwardAPI:             true
+    ConfigMapName:           openshift-service-ca.crt
+    ConfigMapOptional:       <nil>
+QoS Class:                   BestEffort
+Node-Selectors:              env=bla
+Tolerations:                 node.kubernetes.io/not-ready:NoExecute op=Exists for 300s
+                             node.kubernetes.io/unreachable:NoExecute op=Exists for 300s
+Events:
+  Type     Reason            Age   From               Message
+  ----     ------            ----  ----               -------
+  Warning  FailedScheduling  43s   default-scheduler  0/1 nodes are available: 1 node(s) didn't match Pod's node affinity/selector. preemption: 0/1 nodes are available: 1 Preemption is not helpful for scheduling..
+```
+
+After update the deployment to match to a node labeled
+```yaml
+    spec:
+      containers:
+      - image: nginx:latest
+        imagePullPolicy: Always
+        name: nginx
+        resources: {}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      nodeSelector:
+        environment: development
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      serviceAccount: nginx
+      serviceAccountName: nginx
+      terminationGracePeriodSeconds: 30
+.......
+
+luiz---------------->>>$oc get deployments,pods
+NAME                     READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/sample   1/1     1            1           30m
+
+NAME                          READY   STATUS    RESTARTS   AGE
+pod/sample-6bfdc8f895-kxqnc   1/1     Running   0          74s
+```
+
+## Pod Scaling 
+* The desired number of pods is set in the Deployment or Deployment Configuration
+* From there, the replicaset or replication controller is used to guarantee that this number of replicas is running
+* The deployment is using a selector for identifying the replicated pods
+
+#### Deployment or Deployment Config
+* Deployment is the Kubernetes resource, DeploymentConfig is the OpenShift resource
+* It Doesn't matter which one is used
+* DeploymentConfig is created when working with the console
+* Deployment is Standard, but when using `oc new-app --as-deployment-config` it will create a DeploymentConfig instead 
+
+#### Scaling Pods Manually 
+* Use `oc scale` to manually scale the number of Pods
+* * `oc scale --replicas 3 deployment myapp`
+* While doing this, the new desired number of replicas is added to the Deployment, and from there written to the ReplicaSet
+
+```yaml 
+luiz---------------->>>$oc get all
+NAME                          READY   STATUS    RESTARTS   AGE
+pod/sample-6bfdc8f895-kxqnc   1/1     Running   0          10m
+
+NAME                     READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/sample   1/1     1            1           40m
+
+NAME                                DESIRED   CURRENT   READY   AGE
+replicaset.apps/sample-6bfdc8f895   1         1         1       10m
+replicaset.apps/sample-6f556f7866   0         0         0       39m
+replicaset.apps/sample-7896cb94d    0         0         0       40m
+replicaset.apps/sample-7c8cc8cfcd   0         0         0       39m
+replicaset.apps/sample-7cb569b4bf   0         0         0       20m
+
+luiz---------------->>>$oc scale --replicas=3 deployment/sample
+deployment.apps/sample scaled
+
+luiz---------------->>>$oc get all
+NAME                          READY   STATUS    RESTARTS   AGE
+pod/sample-6bfdc8f895-dgw5w   1/1     Running   0          9s
+pod/sample-6bfdc8f895-kxqnc   1/1     Running   0          11m
+pod/sample-6bfdc8f895-lgsvk   1/1     Running   0          9s
+
+NAME                     READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/sample   3/3     3            3           40m
+
+NAME                                DESIRED   CURRENT   READY   AGE
+replicaset.apps/sample-6bfdc8f895   3         3         3       11m
+replicaset.apps/sample-6f556f7866   0         0         0       39m
+replicaset.apps/sample-7896cb94d    0         0         0       40m
+replicaset.apps/sample-7c8cc8cfcd   0         0         0       39m
+replicaset.apps/sample-7cb569b4bf   0         0         0       20m
+```
 
 
 
