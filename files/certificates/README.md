@@ -6,10 +6,6 @@
 - Self-signed certificates are an easy way to get started with your own certificates 
 - These certificates can be used in openshift 
 
-### Creating the CA 
-
-Here’s a step-by-step explanation of the procedure to create a certificate using OpenSSL:
-
 ### 1. **Creating the Certificate Authority (CA)**
 
 The first part is about creating a Certificate Authority (CA), which will be used to sign the certificate.
