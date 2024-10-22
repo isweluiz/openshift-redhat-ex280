@@ -909,7 +909,25 @@ In this case, the Pod will run as user ID 1001, overriding any default from the 
 ## Quota and Limits
 A project can contain multiple `ResourceQuota` objects.
 
-A `LimitRange` resource, also called a limit, defines the default, minimum, and maximum values for compute resource requests and limits for a single pod or for a single container defined inside the project.
+* **Scope:** Namespace-level.
+* **Purpose:** Sets constraints on the total amount of resources (like CPU, memory, storage, or the number of objects like pods, services, etc.) that can be consumed by all the resources (pods, services, etc.) within a namespace.
+* **Use Case:** To ensure that a namespace does not exceed a specific amount of resources. This is useful for controlling the overall resource consumption in a multi-tenant cluster.
+
+Example
+```yaml 
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: compute-resources
+spec:
+  hard:
+    pods: "10"
+    requests.cpu: "4"
+    requests.memory: "16Gi"
+    limits.cpu: "8"
+    limits.memory: "32Gi"
+```
+
 
 ### Get Quota and Limits
 ```
@@ -951,6 +969,11 @@ $ oc delete quota --all -n project1
 ```
 ### Create limit ranges
 A limit range, defined by a LimitRange object, restricts resource consumption in a project. In the project you can set specific resource limits for a pod, container, image, image stream, or persistent volume claim (PVC).
+
+* **Scope:** Pod/container-level.
+* **Purpose:** Sets minimum and maximum resource requests and limits for individual pods or containers within a namespace. It can enforce default values if requests/limits are not set by the user.
+* **Use Case:** To ensure that individual pods or containers have appropriate resource limits and requests, preventing any single pod from consuming too many resources.
+
 
 File `project1-resource-limits.yaml`:
 ```yaml
@@ -1087,7 +1110,19 @@ spec:
     secrets: "6"
     services: "5"
 status: {}
+
 ```
+
+#### Key Differences LimitRange / Quota
+| **Aspect**           | **ResourceQuota**                                   | **LimitRange**                                        |
+|----------------------|-----------------------------------------------------|-------------------------------------------------------|
+| **Scope**            | Entire namespace                                    | Individual pods/containers                            |
+| **Purpose**          | Control overall resource usage in a namespace       | Control minimum/maximum resources for containers      |
+| **Enforcement Level**| Total resources across all objects (e.g., pods)     | Per container or pod basis                            |
+| **Example Use**      | Limit total CPU and memory in a namespace            | Ensure each container has at least 100m CPU but no more than 2 CPU |
+
+Use ResourceQuota when you want to manage the aggregate resources consumed by all objects in a namespace, and use LimitRange to enforce resource constraints at the individual pod or container level. Both are often used together to ensure fair usage and prevent resource exhaustion in a cluster.
+
 
 ### List Nodes Including Labels
 ```
@@ -2223,6 +2258,10 @@ busybox2-storage-data
 luiz---------------->>>$oc exec -it busybox-storage -c my-busybox-1 -- cat /data/busybox2.txt
 busybox2-storage-data
 ```
+
+#### Decoupling Storage with Persistent Volumes
+
+
 
 
 ### Various OpenShift Samples
